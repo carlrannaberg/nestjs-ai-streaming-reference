@@ -1,214 +1,141 @@
-# NestJS + AI SDK + React Streaming Reference Implementation
+# NestJS + AI SDK + React Streaming Reference
 
-A comprehensive reference guide for building real-time AI agent applications using NestJS backend with Vercel AI SDK and React frontend. This documentation serves as a template for implementing streaming AI responses in production applications.
+Complete reference implementation for streaming AI responses between NestJS backend and React frontend using Vercel AI SDK.
 
-## Architecture Overview
+## Architecture
 
 ```
 ┌─────────────────────┐    HTTP POST     ┌─────────────────────┐
 │   React Frontend    │ ───────────────► │   NestJS Backend    │
 │                     │                  │                     │
 │  - useObject hook   │                  │  - AI SDK streaming │
-│  - Material-UI      │ ◄─────────────── │  - Google Gemini    │
-│  - Auto-updating    │   Streaming JSON │  - Zod validation   │
+│  - Defensive JSON   │ ◄─────────────── │  - Google Gemini    │
+│  - Error handling   │   Streaming JSON │  - Zod validation   │
 └─────────────────────┘                  └─────────────────────┘
 ```
 
-### Key Technologies
-
-- **Backend**: NestJS, Vercel AI SDK, Google Gemini 2.5, Zod
-- **Frontend**: React, Material-UI, Vercel AI SDK React hooks
-- **Architecture**: npm workspaces monorepo
-- **Streaming**: Server-sent events with structured JSON objects
+**Stack**: NestJS + Vercel AI SDK + React + Google Gemini + Zod
 
 ## Quick Start
 
-### Prerequisites
-
 ```bash
-npm install -g @nestjs/cli
+# Install dependencies
+npm install @ai-sdk/google ai zod
+
+# Environment setup
+echo "GOOGLE_GENERATIVE_AI_API_KEY=your_key" > .env
 ```
 
-### Project Setup
+## Backend Implementation
 
-```bash
-# Create monorepo structure
-mkdir my-ai-app && cd my-ai-app
-npm init -y
-
-# Setup workspaces in package.json
-{
-  "workspaces": ["packages/api", "packages/webapp"]
-}
-
-# Create backend
-mkdir -p packages/api
-cd packages/api
-nest new . --package-manager npm
-
-# Create frontend  
-cd ../webapp
-npm create vite@latest . -- --template react-ts
-```
-
-### Environment Configuration
-
-Create `packages/api/.env`:
-```env
-GOOGLE_GENERATIVE_AI_API_KEY=your_api_key_here
-PORT=3001
-```
-
-## Backend Implementation Patterns
-
-### 1. Core Streaming Controller Pattern
-
-Every NestJS controller follows this pattern for AI streaming:
+### Core Streaming Controller
 
 ```typescript
-// sequential-processing.controller.ts
 import { Controller, Post, Body, Res } from '@nestjs/common';
 import { Response } from 'express';
 
-@Controller('sequential-processing')
-export class SequentialProcessingController {
-  constructor(private readonly service: SequentialProcessingService) {}
+@Controller('api/stream')
+export class StreamController {
+  constructor(private readonly service: StreamService) {}
 
   @Post()
-  async generateContent(@Body() body: { input: string }, @Res() res: Response) {
-    const result = await this.service.generateContent(body.input);
+  async stream(@Body() body: { input: string }, @Res() res: Response) {
+    const result = await this.service.generateStream(body.input);
     
-    // Standard streaming headers
+    // Essential streaming headers
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     
-    // Pipe AI SDK stream to HTTP response
+    // Pipe AI SDK stream to response
     result.pipeTextStreamToResponse(res);
   }
 }
 ```
 
-### 2. AI SDK Service Integration
-
-Standard service pattern with Google Gemini:
+### Service with AI SDK
 
 ```typescript
-// sequential-processing.service.ts
 import { Injectable } from '@nestjs/common';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { generateText, generateObject, streamObject } from 'ai';
+import { streamObject } from 'ai';
 import { z } from 'zod';
 
 @Injectable()
-export class SequentialProcessingService {
+export class StreamService {
   private readonly google = createGoogleGenerativeAI();
-  
-  // Model selection based on complexity
-  private readonly complexModel = this.google('models/gemini-2.5-pro-preview-06-05');
-  private readonly fastModel = this.google('models/gemini-2.5-flash-preview-05-20');
+  private readonly model = this.google('models/gemini-1.5-flash');
 
-  async generateContent(input: string) {
-    // Step 1: Generate initial content
-    const initialContent = await generateText({
-      model: this.complexModel,
-      prompt: `Generate marketing copy for: ${input}`,
-    });
-
-    // Step 2: Evaluate quality
-    const evaluation = await generateObject({
-      model: this.fastModel,
-      schema: z.object({
-        score: z.number().min(1).max(10),
-        feedback: z.string(),
-      }),
-      prompt: `Evaluate this marketing copy: ${initialContent.text}`,
-    });
-
-    // Step 3: Stream final result with conditional improvement
-    const shouldImprove = evaluation.object.score < 7;
-    
+  async generateStream(input: string) {
     return streamObject({
-      model: this.complexModel,
+      model: this.model,
       schema: z.object({
-        originalContent: z.string(),
-        evaluation: z.object({
-          score: z.number(),
-          feedback: z.string(),
-        }),
-        improvedContent: z.string().optional(),
-        finalScore: z.number().optional(),
+        title: z.string().optional(),
+        content: z.string().optional(),
+        status: z.enum(['processing', 'complete']).optional(),
       }),
-      prompt: shouldImprove 
-        ? `Improve this content based on feedback: ${initialContent.text}\nFeedback: ${evaluation.object.feedback}`
-        : `Return the original content as final`,
+      prompt: `Generate content for: ${input}`,
     });
   }
 }
 ```
 
-### 3. Module Configuration
+### Module Setup
 
 ```typescript
+// stream.module.ts
+import { Module } from '@nestjs/common';
+import { StreamController } from './stream.controller';
+import { StreamService } from './stream.service';
+
+@Module({
+  controllers: [StreamController],
+  providers: [StreamService],
+})
+export class StreamModule {}
+
 // app.module.ts
 import { Module } from '@nestjs/common';
-import { SequentialProcessingModule } from './sequential-processing/sequential-processing.module';
+import { StreamModule } from './stream/stream.module';
 
 @Module({
-  imports: [SequentialProcessingModule],
+  imports: [StreamModule],
 })
 export class AppModule {}
-```
 
-```typescript
-// sequential-processing.module.ts
-import { Module } from '@nestjs/common';
-import { SequentialProcessingController } from './sequential-processing.controller';
-import { SequentialProcessingService } from './sequential-processing.service';
-
-@Module({
-  controllers: [SequentialProcessingController],
-  providers: [SequentialProcessingService],
-})
-export class SequentialProcessingModule {}
-```
-
-### 4. CORS Configuration
-
-```typescript
 // main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
-  // Enable CORS for frontend
   app.enableCors();
-  
   await app.listen(3001);
 }
 bootstrap();
 ```
 
-## Frontend Implementation Patterns
+## Frontend Implementation
 
-### 1. Core Streaming Hook Usage
-
-React component with `useObject` hook:
+### React Component with Streaming
 
 ```typescript
-// AgentInteraction.tsx
 import React, { useState } from 'react';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { z } from 'zod';
 
-export default function AgentInteraction() {
+const schema = z.object({
+  title: z.string().optional(),
+  content: z.string().optional(),
+  status: z.enum(['processing', 'complete']).optional(),
+});
+
+export default function StreamingComponent() {
   const [input, setInput] = useState('');
   
   const { object, submit, isLoading, error } = useObject({
-    api: 'http://localhost:3001/sequential-processing',
-    schema: z.any(), // Generic schema for flexible response handling
+    api: 'http://localhost:3001/api/stream',
+    schema,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -218,233 +145,142 @@ export default function AgentInteraction() {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <textarea
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        placeholder="Enter your request..."
-        onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-            handleSubmit(e);
-          }
-        }}
-      />
+    <div>
+      <form onSubmit={handleSubmit}>
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Enter your request..."
+        />
+        <button type="submit" disabled={isLoading}>
+          {isLoading ? 'Streaming...' : 'Send'}
+        </button>
+      </form>
       
-      <button type="submit" disabled={isLoading}>
-        {isLoading ? 'Processing...' : 'Submit'}
-      </button>
+      {error && <div>Error: {error.message}</div>}
       
-      {error && <div className="error">Error: {error.message}</div>}
-      
-      {object && <ResultDisplay result={object} />}
-    </form>
+      {object && (
+        <div>
+          {object.title && <h2>{object.title}</h2>}
+          {object.content && <p>{object.content}</p>}
+          {object.status && <span>Status: {object.status}</span>}
+        </div>
+      )}
+    </div>
   );
 }
 ```
 
-### 2. Real-time Result Display
 
-Component that updates as streaming data arrives:
+## Defensive JSON Streaming
+
+### The Challenge
+
+When streaming JSON, the frontend receives incomplete chunks that cannot be parsed until complete. Defensive programming is essential.
+
+### Frontend Strategy
 
 ```typescript
-// ResultDisplay.tsx
-import React from 'react';
-import { Card, Typography, Chip, CircularProgress } from '@mui/material';
+import { useChat } from 'ai/react';
+import { useState, useEffect } from 'react';
+import { z } from 'zod';
 
-interface ResultDisplayProps {
-  result: any; // Typed based on your Zod schema
-}
+const StreamingSchema = z.object({
+  title: z.string().optional(),
+  content: z.string().optional(),
+  status: z.enum(['processing', 'complete']).optional(),
+});
 
-export default function ResultDisplay({ result }: ResultDisplayProps) {
+export default function DefensiveStreaming() {
+  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
+    api: 'http://localhost:3001/api/stream',
+  });
+
+  const [parsedData, setParsedData] = useState({});
+  const [parseError, setParseError] = useState(null);
+
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+    
+    if (lastMessage?.role === 'assistant') {
+      const content = lastMessage.content;
+      
+      try {
+        // Attempt to parse JSON - will fail until stream is complete
+        const parsed = JSON.parse(content);
+        
+        // Validate with schema
+        const validation = StreamingSchema.safeParse(parsed);
+        
+        if (validation.success) {
+          setParsedData(validation.data);
+          setParseError(null);
+        }
+      } catch (error) {
+        // Expected error during streaming - ignore
+        if (!isLoading) {
+          setParseError('Invalid JSON structure');
+        }
+      }
+    }
+  }, [messages, isLoading]);
+
   return (
-    <Card sx={{ p: 2, mt: 2 }}>
-      {/* Original Content */}
-      {result.originalContent && (
-        <div>
-          <Typography variant="h6">Original Content</Typography>
-          <Typography>{result.originalContent}</Typography>
-        </div>
+    <div>
+      <form onSubmit={handleSubmit}>
+        <input value={input} onChange={handleInputChange} />
+        <button type="submit" disabled={isLoading}>
+          {isLoading ? 'Streaming...' : 'Send'}
+        </button>
+      </form>
+
+      {parseError && !isLoading && (
+        <div>Error: {parseError}</div>
       )}
-      
-      {/* Evaluation */}
-      {result.evaluation && (
-        <div>
-          <Typography variant="h6">Evaluation</Typography>
-          <Chip 
-            label={`Score: ${result.evaluation.score}/10`}
-            color={result.evaluation.score >= 7 ? 'success' : 'warning'}
-          />
-          <Typography>{result.evaluation.feedback}</Typography>
-        </div>
-      )}
-      
-      {/* Improved Content (streaming) */}
-      {result.improvedContent && (
-        <div>
-          <Typography variant="h6">Improved Content</Typography>
-          <Typography>{result.improvedContent}</Typography>
-        </div>
-      )}
-      
-      {/* Loading state for incomplete streams */}
-      {!result.finalScore && result.evaluation?.score < 7 && (
-        <CircularProgress size={20} />
-      )}
-    </Card>
+
+      {/* Render partial data as it arrives */}
+      <div>
+        {parsedData.title && <h2>{parsedData.title}</h2>}
+        {parsedData.content && <p>{parsedData.content}</p>}
+        {parsedData.status && <span>Status: {parsedData.status}</span>}
+      </div>
+    </div>
   );
 }
 ```
 
-## Advanced Patterns
+## Testing
 
-### 1. Parallel Processing
-
-Execute multiple AI operations concurrently:
+### Service Tests
 
 ```typescript
-async generateCodeReview(code: string) {
-  // Run three reviews in parallel
-  const [securityReview, performanceReview, maintainabilityReview] = 
-    await Promise.all([
-      generateObject({
-        model: this.fastModel,
-        schema: securitySchema,
-        prompt: `Security review: ${code}`,
-      }),
-      generateObject({
-        model: this.fastModel,  
-        schema: performanceSchema,
-        prompt: `Performance review: ${code}`,
-      }),
-      generateObject({
-        model: this.fastModel,
-        schema: maintainabilitySchema,
-        prompt: `Maintainability review: ${code}`,
-      }),
-    ]);
-
-  // Stream combined results
-  return streamObject({
-    model: this.complexModel,
-    schema: combinedReviewSchema,
-    prompt: `Combine reviews: ${JSON.stringify({
-      security: securityReview.object,
-      performance: performanceReview.object,
-      maintainability: maintainabilityReview.object,
-    })}`,
-  });
-}
-```
-
-### 2. Routing Pattern
-
-Dynamic model selection based on query classification:
-
-```typescript
-async handleQuery(query: string) {
-  // Classify query complexity
-  const classification = await generateObject({
-    model: this.fastModel,
-    schema: z.object({
-      complexity: z.enum(['simple', 'moderate', 'complex']),
-      category: z.string(),
-    }),
-    prompt: `Classify this query: ${query}`,
-  });
-
-  // Select appropriate model and specialist
-  const model = classification.object.complexity === 'complex' 
-    ? this.complexModel 
-    : this.fastModel;
-
-  const specialist = this.getSpecialist(classification.object.category);
-
-  return streamObject({
-    model,
-    schema: responseSchema,
-    prompt: `${specialist} respond to: ${query}`,
-  });
-}
-```
-
-### 3. Tool Usage Pattern
-
-AI with function calling capabilities:
-
-```typescript
-import { tool } from 'ai';
-import { evaluate } from 'mathjs';
-
-async solveMathProblem(problem: string) {
-  return streamObject({
-    model: this.complexModel,
-    schema: mathSolutionSchema,
-    tools: {
-      calculate: tool({
-        description: 'Perform mathematical calculations',
-        parameters: z.object({
-          expression: z.string(),
-        }),
-        execute: async ({ expression }) => {
-          try {
-            const result = evaluate(expression);
-            return { result: result.toString() };
-          } catch (error) {
-            return { error: error.message };
-          }
-        },
-      }),
-    },
-    prompt: `Solve this math problem step by step: ${problem}`,
-  });
-}
-```
-
-## Testing Patterns
-
-### Unit Tests
-
-```typescript
-// sequential-processing.service.spec.ts
 import { Test } from '@nestjs/testing';
-import { SequentialProcessingService } from './sequential-processing.service';
+import { StreamService } from './stream.service';
 
-// Mock AI SDK
 jest.mock('ai', () => ({
-  generateText: jest.fn(),
-  generateObject: jest.fn(),
   streamObject: jest.fn(),
 }));
 
-describe('SequentialProcessingService', () => {
-  let service: SequentialProcessingService;
+describe('StreamService', () => {
+  let service: StreamService;
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
-      providers: [SequentialProcessingService],
+      providers: [StreamService],
     }).compile();
 
-    service = module.get<SequentialProcessingService>(SequentialProcessingService);
+    service = module.get<StreamService>(StreamService);
   });
 
-  it('should improve content when score is low', async () => {
-    // Mock responses
-    (generateText as jest.Mock).mockResolvedValue({
-      text: 'Initial content',
-    });
-    
-    (generateObject as jest.Mock).mockResolvedValue({
-      object: { score: 5, feedback: 'Needs improvement' },
-    });
+  it('should create stream object', async () => {
+    const mockStream = { pipeTextStreamToResponse: jest.fn() };
+    (streamObject as jest.Mock).mockReturnValue(mockStream);
 
-    const mockStreamObject = { pipeTextStreamToResponse: jest.fn() };
-    (streamObject as jest.Mock).mockReturnValue(mockStreamObject);
-
-    const result = await service.generateContent('test input');
+    const result = await service.generateStream('test input');
     
     expect(streamObject).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining('Improve this content'),
+        prompt: expect.stringContaining('test input'),
       })
     );
   });
@@ -454,13 +290,12 @@ describe('SequentialProcessingService', () => {
 ### E2E Tests
 
 ```typescript
-// sequential-processing.e2e-spec.ts
 import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 
-describe('Sequential Processing (e2e)', () => {
+describe('Streaming (e2e)', () => {
   let app: INestApplication;
 
   beforeEach(async () => {
@@ -469,149 +304,76 @@ describe('Sequential Processing (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.enableCors();
     await app.init();
   });
 
-  it('/sequential-processing (POST)', () => {
+  it('should stream JSON response', () => {
     return request(app.getHttpServer())
-      .post('/sequential-processing')
-      .send({ input: 'Test product' })
+      .post('/api/stream')
+      .send({ input: 'Test' })
       .expect(200)
-      .expect((res) => {
-        expect(res.headers['content-type']).toBe('application/json');
-        expect(res.headers['cache-control']).toBe('no-cache');
-      });
+      .expect('Content-Type', 'application/json')
+      .expect('Cache-Control', 'no-cache');
   });
 });
-```
-
-## Development Workflow
-
-### Package.json Scripts
-
-```json
-{
-  "scripts": {
-    "dev": "concurrently \"npm run start:dev --workspace=api\" \"npm run dev --workspace=webapp\"",
-    "build": "npm run build --workspaces",
-    "lint": "npm run lint --workspaces",
-    "test": "npm run test --workspace=api",
-    "test:e2e": "npm run test:e2e --workspace=api"
-  }
-}
-```
-
-### Development Commands
-
-```bash
-# Start both backend and frontend
-npm run dev
-
-# Run linting across all packages
-npm run lint
-
-# Run tests
-npm run test
-npm run test:e2e
-
-# Build for production
-npm run build
 ```
 
 ## Best Practices
 
-### 1. Error Handling
+### Error Handling
 
 ```typescript
-// Service level
+// Backend
 try {
-  const result = await generateObject({...});
-  return result;
+  const result = await this.service.generateStream(input);
+  result.pipeTextStreamToResponse(res);
 } catch (error) {
-  console.error('AI generation failed:', error);
-  throw new Error('Failed to generate content');
+  console.error('Streaming error:', error);
+  res.status(500).json({ error: 'Streaming failed' });
 }
 
-// Frontend level
+// Frontend
 {error && (
-  <Alert severity="error">
-    {error.message || 'An error occurred'}
-  </Alert>
+  <div style={{ color: 'red' }}>
+    Error: {error.message || 'Something went wrong'}
+  </div>
 )}
 ```
 
-### 2. Type Safety
+### Performance
 
-Always use Zod schemas for AI responses:
-
-```typescript
-const responseSchema = z.object({
-  content: z.string(),
-  metadata: z.object({
-    confidence: z.number(),
-    tokens: z.number(),
-  }),
-});
-```
-
-### 3. Performance Optimization
-
-- Use appropriate model sizes (Flash for simple tasks, Pro for complex)
+- Use appropriate model sizes (Flash for speed, Pro for quality)
 - Implement request debouncing in frontend
-- Cache AI responses when appropriate
-- Stream partial results for better UX
+- Set reasonable timeouts for streaming
+- Cache responses when appropriate
 
-### 4. Security
+### Security
 
-- Never expose API keys in frontend
-- Validate all inputs with Zod
-- Implement rate limiting
+- Never expose API keys in frontend code
+- Validate all inputs with Zod schemas
+- Implement rate limiting on endpoints
 - Sanitize AI-generated content before display
 
-## Deployment Considerations
 
-### Environment Variables
+## Key Concepts
 
-```env
-# Production
-NODE_ENV=production
-GOOGLE_GENERATIVE_AI_API_KEY=prod_key
-PORT=3001
+### Defensive JSON Parsing
+- JSON parsing **will fail** during streaming - this is expected
+- Only show errors when streaming is complete
+- Use Zod schemas for validation and type safety
+- Render partial data as it arrives
 
-# CORS origins for production
-CORS_ORIGINS=https://yourdomain.com
-```
+### Stream Headers
+- `Content-Type: application/json` for JSON streams
+- `Cache-Control: no-cache` prevents caching
+- `Connection: keep-alive` maintains connection
 
-### Docker Setup
+### Error Recovery
+- Implement retry mechanisms for failed requests
+- Provide clear error messages to users
+- Clean up state on component unmount
 
-```dockerfile
-# Backend Dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-EXPOSE 3001
-CMD ["npm", "run", "start:prod"]
-```
+---
 
-### Monitoring
-
-- Log AI token usage for cost tracking
-- Monitor streaming connection health
-- Track error rates by pattern type
-- Measure response times for different model sizes
-
-## Contributing
-
-This reference implementation follows established patterns from production AI applications. When extending:
-
-1. Follow the established controller/service patterns
-2. Add comprehensive tests for new patterns
-3. Update documentation with new examples
-4. Ensure type safety with Zod schemas
-
-## License
-
-MIT License - see LICENSE file for details.
+**Complete reference for streaming AI responses between NestJS and React using Vercel AI SDK**
