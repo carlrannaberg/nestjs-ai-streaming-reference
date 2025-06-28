@@ -14,21 +14,21 @@ Complete reference implementation for streaming AI responses between NestJS back
 └─────────────────────┘                  └─────────────────────┘
 ```
 
-**Stack**: NestJS + Vercel AI SDK + React + Google Gemini + Zod
+**Stack**: NestJS + Vercel AI SDK v5 + React + OpenAI + Zod
 
 ## Quick Start
 
 ```bash
 # Install dependencies
-npm install @ai-sdk/google ai zod
+npm install @ai-sdk/openai ai zod
 
-# Environment setup
-echo "GOOGLE_GENERATIVE_AI_API_KEY=your_key" > .env
+# Environment setup  
+echo "OPENAI_API_KEY=your_key" > .env
 ```
 
 ## Backend Implementation
 
-### Core Streaming Controller
+### Core Streaming Controller (v5)
 
 ```typescript
 import { Controller, Post, Body, Res } from '@nestjs/common';
@@ -42,29 +42,28 @@ export class StreamController {
   async stream(@Body() body: { input: string }, @Res() res: Response) {
     const result = await this.service.generateStream(body.input);
     
-    // Essential streaming headers
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Cache-Control', 'no-cache');
+    // Essential streaming headers for v5
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     
-    // Pipe AI SDK stream to response
+    // Use v5 streaming method
     result.pipeTextStreamToResponse(res);
   }
 }
 ```
 
-### Service with AI SDK
+### Service with AI SDK v5
 
 ```typescript
 import { Injectable } from '@nestjs/common';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { openai } from '@ai-sdk/openai';
 import { streamObject } from 'ai';
 import { z } from 'zod';
 
 @Injectable()
 export class StreamService {
-  private readonly google = createGoogleGenerativeAI();
-  private readonly model = this.google('models/gemini-1.5-flash');
+  private readonly model = openai('gpt-4o-mini');
 
   async generateStream(input: string) {
     return streamObject({
@@ -76,6 +75,29 @@ export class StreamService {
       }),
       prompt: `Generate content for: ${input}`,
     });
+  }
+}
+```
+
+### Chat API with streamText (v5)
+
+```typescript
+import { Controller, Post, Body } from '@nestjs/common';
+import { openai } from '@ai-sdk/openai';
+import { streamText } from 'ai';
+
+@Controller('api/chat')
+export class ChatController {
+  private readonly model = openai('gpt-4o-mini');
+
+  @Post()
+  async chat(@Body() body: { messages: Array<{role: string, content: string}> }) {
+    const result = streamText({
+      model: this.model,
+      messages: body.messages,
+    });
+
+    return result.toDataStreamResponse();
   }
 }
 ```
@@ -117,11 +139,11 @@ bootstrap();
 
 ## Frontend Implementation
 
-### React Component with Streaming
+### React Component with useObject (v5)
 
 ```typescript
 import React, { useState } from 'react';
-import { experimental_useObject as useObject } from '@ai-sdk/react';
+import { useObject } from 'ai/react';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -134,7 +156,7 @@ export default function StreamingComponent() {
   const [input, setInput] = useState('');
   
   const { object, submit, isLoading, error } = useObject({
-    api: 'http://localhost:3001/api/stream',
+    api: '/api/stream',
     schema,
   });
 
@@ -171,14 +193,51 @@ export default function StreamingComponent() {
 }
 ```
 
+### Chat Component with useChat (v5)
 
-## Defensive JSON Streaming
+```typescript
+import React from 'react';
+import { useChat } from 'ai/react';
+
+export default function ChatComponent() {
+  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
+    api: '/api/chat',
+  });
+
+  return (
+    <div>
+      {messages.map(message => (
+        <div key={message.id}>
+          <strong>{message.role}:</strong>
+          {message.content.map((part, index) => 
+            part.type === 'text' ? <span key={index}>{part.text}</span> : null
+          )}
+        </div>
+      ))}
+      
+      <form onSubmit={handleSubmit}>
+        <input
+          value={input}
+          onChange={handleInputChange}
+          placeholder="Type your message..."
+        />
+        <button type="submit" disabled={isLoading}>
+          {isLoading ? 'Sending...' : 'Send'}
+        </button>
+      </form>
+    </div>
+  );
+}
+```
+
+
+## Defensive JSON Streaming (v5)
 
 ### The Challenge
 
-When streaming JSON, the frontend receives incomplete chunks that cannot be parsed until complete. Defensive programming is essential.
+When streaming JSON, the frontend receives incomplete chunks that cannot be parsed until complete. AI SDK v5 handles message structure differently.
 
-### Frontend Strategy
+### Frontend Strategy with v5 Message Parts
 
 ```typescript
 import { useChat } from 'ai/react';
@@ -193,7 +252,7 @@ const StreamingSchema = z.object({
 
 export default function DefensiveStreaming() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
-    api: 'http://localhost:3001/api/stream',
+    api: '/api/chat',
   });
 
   const [parsedData, setParsedData] = useState({});
@@ -203,11 +262,15 @@ export default function DefensiveStreaming() {
     const lastMessage = messages[messages.length - 1];
     
     if (lastMessage?.role === 'assistant') {
-      const content = lastMessage.content;
+      // Extract text from message parts (v5 structure)
+      const textContent = lastMessage.content
+        .filter(part => part.type === 'text')
+        .map(part => part.text)
+        .join('');
       
       try {
         // Attempt to parse JSON - will fail until stream is complete
-        const parsed = JSON.parse(content);
+        const parsed = JSON.parse(textContent);
         
         // Validate with schema
         const validation = StreamingSchema.safeParse(parsed);
@@ -356,24 +419,35 @@ try {
 - Sanitize AI-generated content before display
 
 
-## Key Concepts
+## Key Concepts (v5)
+
+### Message Structure Changes
+- Messages now use `content` array with `part` objects
+- Each part has a `type` (e.g., 'text') and corresponding data
+- Extract text using: `part.type === 'text' ? part.text : null`
+
+### Response Methods
+- `toDataStreamResponse()` - For chat streaming with UI compatibility
+- `pipeTextStreamToResponse()` - For raw text streaming
+- `pipeDataStreamToResponse()` - For custom data streaming
 
 ### Defensive JSON Parsing
 - JSON parsing **will fail** during streaming - this is expected
-- Only show errors when streaming is complete
+- Handle v5 message parts structure properly
 - Use Zod schemas for validation and type safety
 - Render partial data as it arrives
 
-### Stream Headers
-- `Content-Type: application/json` for JSON streams
-- `Cache-Control: no-cache` prevents caching
+### Stream Headers (v5)
+- `Content-Type: text/plain; charset=utf-8` for text streams
+- `Cache-Control: no-cache, no-transform` prevents caching
 - `Connection: keep-alive` maintains connection
 
-### Error Recovery
-- Implement retry mechanisms for failed requests
-- Provide clear error messages to users
-- Clean up state on component unmount
+### Breaking Changes from Previous Versions
+- Remove `experimental_` prefix from hooks
+- Update message content structure to parts array
+- Use OpenAI models instead of Google Gemini for examples
+- Different response method naming
 
 ---
 
-**Complete reference for streaming AI responses between NestJS and React using Vercel AI SDK**
+**Complete reference for streaming AI responses using Vercel AI SDK v5**

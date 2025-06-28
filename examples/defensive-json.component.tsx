@@ -1,4 +1,4 @@
-// Defensive JSON streaming component
+// Defensive JSON streaming component (AI SDK v5)
 import React, { useState, useEffect } from 'react';
 import { useChat } from 'ai/react';
 import { z } from 'zod';
@@ -15,22 +15,26 @@ type ResponseType = z.infer<typeof ResponseSchema>;
 
 export default function DefensiveJsonComponent() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
-    api: 'http://localhost:3001/api/stream',
+    api: '/api/chat',
   });
 
   const [parsedData, setParsedData] = useState<ResponseType>({});
   const [parseError, setParseError] = useState<string | null>(null);
 
-  // Defensive JSON parsing
+  // Defensive JSON parsing for v5 message structure
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
     
     if (lastMessage?.role === 'assistant') {
-      const content = lastMessage.content;
+      // Extract text from message parts (v5 structure)
+      const textContent = lastMessage.content
+        .filter(part => part.type === 'text')
+        .map(part => part.text)
+        .join('');
       
       try {
         // Attempt to parse JSON - will fail until stream is complete
-        const parsed = JSON.parse(content);
+        const parsed = JSON.parse(textContent);
         
         // Validate against schema
         const validation = ResponseSchema.safeParse(parsed);

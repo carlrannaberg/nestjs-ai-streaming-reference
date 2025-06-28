@@ -1,13 +1,12 @@
-// Simple NestJS service for AI streaming
+// Simple NestJS service for AI streaming (AI SDK v5)
 import { Injectable } from '@nestjs/common';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { openai } from '@ai-sdk/openai';
 import { streamObject } from 'ai';
 import { z } from 'zod';
 
 @Injectable()
 export class SimpleStreamService {
-  private readonly google = createGoogleGenerativeAI();
-  private readonly model = this.google('models/gemini-1.5-flash');
+  private readonly model = openai('gpt-4o-mini');
 
   async generateStream(input: string) {
     // Define response schema

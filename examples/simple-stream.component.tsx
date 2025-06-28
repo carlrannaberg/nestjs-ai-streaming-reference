@@ -1,6 +1,6 @@
-// Simple React component for AI streaming
+// Simple React component for AI streaming (AI SDK v5)
 import React, { useState } from 'react';
-import { experimental_useObject as useObject } from '@ai-sdk/react';
+import { useObject } from 'ai/react';
 import { z } from 'zod';
 
 // Define response schema
@@ -14,7 +14,7 @@ export default function SimpleStreamComponent() {
   const [input, setInput] = useState('');
   
   const { object, submit, isLoading, error } = useObject({
-    api: 'http://localhost:3001/api/stream',
+    api: '/api/stream',
     schema: streamSchema,
   });
 
@@ -26,7 +26,7 @@ export default function SimpleStreamComponent() {
 
   return (
     <div style={{ maxWidth: '600px', margin: '0 auto', padding: '20px' }}>
-      <h2>AI Streaming Example</h2>
+      <h2>AI Streaming Example (v5)</h2>
       
       <form onSubmit={handleSubmit}>
         <input
